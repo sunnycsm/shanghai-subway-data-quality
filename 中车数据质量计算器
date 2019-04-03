@@ -1,0 +1,110 @@
+#中车数据质量计算器：数值列，时间列，时间+数值：速度列，加速度列
+##用户需两步操作：1. 在以下行写输入文件夹路径。2. 在最后一行写输出csv文件路径。
+###用户第一步操作：1. 在以下行写输入文件夹路径。
+path ='input_folder_path'  #mac and windows read path is different
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+import glob
+from functools import reduce
+import csv
+
+#读入文件夹中所有文件
+all_files = glob.glob(path + "*.csv") 
+#change path name to readable path name
+for i in range(len(all_files)):
+    all_files[i] = all_files[i].replace('\\','/')  #replace with /
+    
+a_stat = pd.DataFrame(index=['数值个数count', '平均值mean', '标准差std', '最小值min', '下四分位数25%', '中位数50%',
+       '上四分位数75%', '最大值max', '异常值outlier', '异常率%', '偏度skewness', '峰度kurtosis'])
+b_stat = a_stat
+c_stat = a_stat
+d_stat = a_stat
+
+# 转成dataframe格式, 使用第二列timestamp 作为时间戳
+for file in all_files:
+    df = pd.read_csv(file).drop(['time'],axis=1)
+    # 计算outlier 用3sigma准则异常值和异常率. 
+    df_outlier = df[(np.abs(df-df.mean()) > (3*df.std()))].count()
+    df_outlier_rate = df_outlier/len(df)* 100
+    df_oo = pd.concat([df_outlier,df_outlier_rate],axis = 1)
+    df_oo.transpose()
+    df_des = df.describe() #生成含基本统计计量值
+    df_new = df_des.append(df_oo.transpose())
+    df_new.index = ['数值个数count', '平均值mean', '标准差std', '最小值min',
+                    '下四分位数25%', '中位数50%','上四分位数75%',
+                     '最大值max','异常值outlier','异常率%']
+    #计算偏度和峰度
+    df_sk = pd.concat([df.skew(),df.kurtosis()],axis=1)
+    df_sk.columns = ['偏度skewness','峰度kurtosis']
+    
+    df_properties = df_new.append(df_sk.transpose())
+    df_properties.columns = [df.columns[1]+'时间列',df.columns[1]+'数值列']   
+    
+    #数值列统计分布   
+    numerical_properties= df_properties.iloc[:,1] 
+    a_stat = pd.concat([a_stat,numerical_properties], axis=1)
+    
+    #时间列/采集间隔统计分布
+    time_dif = df['timestamp'].diff()
+    # 异常值/率统计 find number of outliers and rate of outliers
+    time_outlier = time_dif[(np.abs(time_dif-time_dif.mean()) > (3*time_dif.std()))].count()
+    time_outlier_rate = time_outlier/len(time_dif)* 100
+    #create a dataframe for outliers
+    timeoosk_dict = {'异常值outlier': [time_outlier], '异常率%': [time_outlier_rate],
+                     '偏度skewness': [time_dif.skew()], 
+                     '峰度kurtosis': [time_dif.kurtosis()]}
+    time_oosk = pd.DataFrame(data = timeoosk_dict,dtype=np.int64)
+    #time_oosk
+    time_des = time_dif.describe() #生成基本统计计量值 
+    time_properties = time_des.append(time_oosk.transpose())
+    time_properties.index = ['数值个数count', '平均值mean', '标准差std', '最小值min', 
+              '下四分位数25%', '中位数50%', '上四分位数75%', '最大值max',
+              '异常值outlier','异常率%','偏度skewness', '峰度kurtosis']
+    time_properties.columns=[df.columns[1]+'时间列']
+    b_stat = pd.concat([b_stat,time_properties], axis=1)
+    
+    #速度计算，数值变化/时间间隔
+    speed = pd.DataFrame()
+    speed[df.columns[1]+'速度']= df.iloc[:,1].diff()/df.iloc[:,0].diff()
+    # find number of outliers and rate of outliers 计算异常值和异常率
+    speed_outlier = speed[(np.abs(speed - speed.mean()) > (3 * speed.std()))].count()
+    speed_outlier_rate = speed_outlier/len(speed)* 100
+    speed_oo = pd.concat([speed_outlier,speed_outlier_rate],axis = 1)
+    speed_oo.transpose()
+
+    speed_des = speed.describe() #生成基本统计计量值 
+    speed_new = speed_des.append(speed_oo.transpose())
+    speed_new.index = ['数值个数count', '平均值mean', '标准差std', '最小值min',
+                    '下四分位数25%', '中位数50%','上四分位数75%',
+                     '最大值max','异常值outlier','异常率%']
+    speed_sk = pd.concat([speed.skew(),speed.kurtosis()],axis=1)
+    speed_sk.columns = ['偏度skewness','峰度kurtosis']
+    speed_properties = speed_new.append(speed_sk.transpose())
+    c_stat = pd.concat([c_stat, speed_properties], axis=1)
+    
+    #加速度计算，数值间隔/（时间间隔**2）
+    accer = pd.DataFrame()
+    accer[df.columns[1]+'加速度']= df.iloc[:,1].diff()/df.iloc[:,0].diff()**2
+    # find number of outliers and rate of outliers
+    accer_outlier = accer[(np.abs(accer-accer.mean()) > (3*accer.std()))].count()
+    accer_outlier_rate = accer_outlier/len(accer) *100
+    accer_oo = pd.concat([accer_outlier,accer_outlier_rate],axis = 1)
+    accer_oo.transpose()
+    #时间+数值列： 加速度统计分布
+    #pd.options.display.float_format = '{:.2f}'.format # choose format not to be scientific format. 
+    accer_des = accer.describe() #生成含12个传感器值的基本统计计量值 
+    accer_new = accer_des.append(accer_oo.transpose())
+    accer_new.index = ['数值个数count', '平均值mean', '标准差std', '最小值min', '下四分位数25%', '中位数50%', '上四分位数75%', '最大值max','异常值outlier','异常率%']
+    accer_sk = pd.concat([accer.skew(),accer.kurtosis()],axis=1)
+    accer_sk.columns = ['偏度skewness','峰度kurtosis']
+    accer_properties = accer_new.append(accer_sk.transpose())
+    d_stat = pd.concat([d_stat, accer_properties], axis=1)
+    
+    # put 4 statistical criteria together，数值列，时间列，时间+数值：速度列，加速度列
+    frames=[a_stat,b_stat,c_stat,d_stat]
+    statistics = pd.concat(frames,axis=1).transpose()
+    
+    ###用户第二步操作：2. 在最后一行写输出csv文件路径。
+    statistics.to_csv('output_file_path.csv',encoding='utf-8-sig')
